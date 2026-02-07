@@ -1,0 +1,943 @@
+---
+title: "24.03.10_EVALUACIÓN MÓDULO 3"
+author: "Cristóbal León-Salas"
+date: "2024-03-10"
+output: html_document
+---
+
+```{r 00. Carga de librerias}
+
+suppressWarnings(suppressPackageStartupMessages(library(corrplot)))
+suppressWarnings(suppressPackageStartupMessages(library(tidyverse)))
+suppressWarnings(suppressPackageStartupMessages(library(gridExtra)))
+suppressWarnings(suppressPackageStartupMessages(library(lattice)))
+suppressWarnings(suppressPackageStartupMessages(library(gvlma)))
+suppressWarnings(suppressPackageStartupMessages(library(agricolae)))
+suppressWarnings(suppressPackageStartupMessages(library(MASS)))
+suppressWarnings(suppressPackageStartupMessages(library(dplyr)))
+suppressWarnings(suppressPackageStartupMessages(library(mgcv)))
+suppressWarnings(suppressPackageStartupMessages(library(prclust)))
+suppressWarnings(suppressPackageStartupMessages(library(caret)))
+suppressWarnings(suppressPackageStartupMessages(library(splines)))
+suppressWarnings(suppressPackageStartupMessages(library(ggplot2)))
+suppressWarnings(suppressPackageStartupMessages(library(glmnet)))
+suppressWarnings(suppressPackageStartupMessages(library(randomForest)))
+suppressWarnings(suppressPackageStartupMessages(library(readxl)))
+suppressWarnings(suppressPackageStartupMessages(library(formattable)))
+suppressWarnings(suppressPackageStartupMessages(library(knitr)))
+suppressWarnings(suppressPackageStartupMessages(library(lme4)))
+suppressWarnings(suppressPackageStartupMessages(library(lmerTest)))
+suppressWarnings(suppressPackageStartupMessages(library(stats)))
+suppressWarnings(suppressPackageStartupMessages(library(Matrix)))
+
+```
+
+ 
+```{r 00. Lectura de datos}
+
+df_Cantabria = read.csv ("datos.csv")
+
+```
+
+```{r 00. Análisis de las variables del data set}
+
+# Comencemos por analizaar las variables recogidas en el dataset:
+
+# VAB: Se define como el valor agregado bruto y es una magnitud macroeconómica que mide el valor total creado por un sector, en el caso que nos ocupa, el industial. Esto es, el valor del conjunto de bienes y servicios que se producen en el sector industrial en un país durante un periodo de tiempo, descontando los impuestos indirectos y los consumos intermedios. LO QUE CONTIENE EL FICHERO ES LA TASA DE CRECIMIENTO DEL VAB EN TÉRMINOS DE VOLUMEN.
+
+# ÍNDICE DE EXPORTACIONES: El índice de exportaciones es una medida que evalúa el desempeño de las exportaciones de un país o región. Representa el cambio porcentual en el valor de las exportaciones en comparación con un período base o referencia. LO QUE CONTIENE EL FICHERO ES LA TASA DE CRECIMIENTO DE ESTE ÍNDICE
+
+# ÍNDICE DE OCUPADOS: El índice de ocupados es una medida que evalúa la cantidad de personas empleadas en un país o región. Representa el cambio porcentual en el número de ocupados en comparación con un período base o referencia. LO QUE CONTIENE EL FICHERO ES LA TASA DE CRECIMIENTO DE ESTE ÍNDICE.
+
+#IPI: mide la evolución mensual de los precios de los productos industriales fabricados y vendidos en el mercado interior, en el primer paso de su comercialización, es decir, los precios de venta a salida de fábrica, excluyendo los gastos de transporte y comercialización y el IVA facturado.
+
+summary(df_Cantabria)
+str(df_Cantabria)
+
+# El dataset se compone de 5 variables: la X que representa los años de estudios, por lo que estamos ante caso con espacio temporal y las otras 4 son variables numéricas:
+
+#A patir de las definiciones anteriormente señaladas, la lógica me hace pensar que debe haber una fuerte correlación directa entre alas cuatro variables que definen el dataset. Veámoslo:
+
+data_temp_omit <- subset(x=df_Cantabria,select=c("EXPORT","OCUP","IPI","VAB"))
+
+correlacion_pearson_df = cor(data_temp_omit, use = "pairwise.complete.obs")
+
+corrplot(correlacion_pearson_df,
+         tl.cex=0.5,
+         tl.offset = 0.6,
+         type="upper",
+         method = "number", 
+         addCoef.col="grey", 
+         order = "AOE", 
+         number.cex=1)
+
+#ciertamente, la relación de estas 4 variables es menor de lo que se podia esperar.Tan solo se aprecia una relación alta entre las variables "OCUP" y "VAB" (covarianza = 0.69) y entre "IPI" e "VAB" (covarianza = 0.71)
+
+#Veamos ahora las distribuciones de cada una de las variables numéricas por medio de histogramas:
+
+histogram_plot <- function(data, var, bins=5){
+  
+  var <- as.symbol(var)
+  Diff = max(data[[var]]) - min (data[[var]])
+  media = mean (data[[var]])
+  mediana = median (data[[var]])
+  
+  g <- ggplot(data, aes(x = !!var)) +
+    geom_histogram(bins = bins, fill = "lightblue") +
+    geom_vline(xintercept = media, linetype = "dashed", color = "red", size = 1) +
+    geom_vline(xintercept = mediana, linetype = "dashed", color = "purple", size = 1) +
+    theme(legend.position = "topright") +
+    annotate("text", x = media + Diff/5, y = 3, label = paste("Media =", round(media, 5)), color = "red") +
+    annotate("text", x = media + Diff/5, y =1, label = paste("Mediana =", round(mediana, 5)), color = "purple")
+}
+
+EXPORT_hist <- histogram_plot(df_Cantabria, "EXPORT")
+OCUP_hist <- histogram_plot(df_Cantabria, "OCUP")
+IPI_hist <- histogram_plot(df_Cantabria, "IPI")
+VAB_hist <- histogram_plot(df_Cantabria, "VAB")
+
+grid.arrange(EXPORT_hist, OCUP_hist, nrow = 1, ncol=2)
+grid.arrange(IPI_hist, VAB_hist, nrow = 1, ncol=2)
+
+# Se observa que, salvo la variable IPI, el resto parecen seguir una distribución normal.
+
+#Analicemos ahora si estas variables presentan datos anómalos o outliers:
+
+boxplot_plot <- function(data, var){
+  var <- as.symbol(var)
+
+  ggplot(data, aes(y=!!var)) + geom_boxplot()}
+
+EXPORT_bp <- boxplot_plot (df_Cantabria, "EXPORT")
+OCUP_bp <- boxplot_plot(df_Cantabria, "OCUP")
+IPI_bp <- boxplot_plot(df_Cantabria, "IPI")
+VAB_bp <- boxplot_plot(df_Cantabria, "VAB")
+
+grid.arrange(EXPORT_bp, EXPORT_bp, IPI_bp,VAB_bp, nrow = 2, ncol=2)
+
+#Se observa que las variables IPI y VAB presentan datos outliers o anómalos. En realidad, tampoco deberiamos tomarlos como tal, puesto que se trata de un dataset referido a un espacio temporal anual de 19 observaciones solamente.
+
+#Veamos ahora mediante un gráfico lineal la tendencia de cada una de las variables:
+
+Grafica_XY = xyplot(EXPORT+OCUP+IPI+VAB ~ X, type=c("p","l"), pch=16, 
+  auto.key=list(border=TRUE), par.settings=simpleTheme(pch=16), 
+  scales=list(x=list(relation='same'), y=list(relation='same')), 
+  data=df_Cantabria,xlab="Tiempo",ylab="Tasa crecimiento", main="Cantabria")
+
+print(Grafica_XY)
+
+#Analicemos ahora por separado las variables OCUP y VAB e IPI y VAB, ya que vimos que podía haber una fuerte correlación entre ellas:
+
+XY_OCUP_VAB = xyplot(OCUP+VAB ~ X, type=c("p","l"), pch=16, 
+  auto.key=list(border=TRUE), par.settings=simpleTheme(pch=16), 
+  scales=list(x=list(relation='same'), y=list(relation='same')), 
+  data=df_Cantabria,xlab="Tiempo",ylab="Tasa crecimiento", main="OCUP y VAB - Cantabria")
+
+XY_IPI_VAB = xyplot(IPI+VAB ~ X, type=c("p","l"), pch=16, 
+  auto.key=list(border=TRUE), par.settings=simpleTheme(pch=16), 
+  scales=list(x=list(relation='same'), y=list(relation='same')), 
+  data=df_Cantabria,xlab="Tiempo",ylab="Tasa crecimiento", main="IPI y VAB - Cantabria")
+
+grid.arrange(XY_OCUP_VAB, XY_IPI_VAB, nrow = 2, ncol=1)
+
+
+```
+```{r 01. Regresion Linea simple - Tres modelos}
+
+# Al tratarse de una regresión lineal simple, usaremos el método de los Mínimos Cuadrados Ordinarios (MCO). Principal hipótesis para el caso que nos ocupa: E(ut)=0
+
+# Hay que analizar 3 modelos dados y ver cual es el más adecuado.
+
+#Modelo a) VABt=β^∗IPIt+ut:
+
+Mod_a <- lm(VAB~IPI-1, data=df_Cantabria)
+summary(Mod_a)
+
+# El coeficiente β^ es significativo al 99.9%
+# R^2 = 0.5119
+
+mean(Mod_a$residuals) # La esperanza de los residuos es 0.0001630986
+
+#Modelo b) VABt=β^+ut:
+
+Mod_b <- lm(VAB~1, data=df_Cantabria)
+summary(Mod_b)
+
+# El coeficiente β^ no es significativo
+# El valor de R^2 no aparece...
+
+mean(Mod_b$residuals) # La esperanza de los residuos es práticamente nula
+
+#Modelo b) VABt=α^+β^∗IPIt+ut:
+
+Mod_c <- lm(VAB~IPI, data=df_Cantabria)
+summary(Mod_c)
+
+# El coeficiente α^ no es significativo
+# El coeficiente β^ es significativo al 99.9%
+# R^2 = 0.5109
+
+mean(Mod_c$residuals) # La esperanza de los residuos es práticamente nula
+
+#Represento los tres modelos en una gráfica:
+
+datos = subset(x=df_Cantabria,select=c("IPI","VAB"))
+
+plot(datos, pch=20, col = "black")
+lines(datos$IPI, Mod_a$fitted.values, col="blue")
+lines(datos$IPI, Mod_b$fitted.values, col="red")
+lines(datos$IPI, Mod_c$fitted.values, col="green")
+
+#Parece que los modelos que mejor ajustan son el "a" y el "c", de hecho, las rectas son prácticamente iguales.
+
+# Tomo el modelo c, porque la esperanza de los residuos es prácticamente nula. Por tanto mi modelo será:
+
+# VABt = 0.0001636 + 0.6121220 * IPIt + ut
+
+plot(Mod_c)
+
+# Del Q-Q plot del modelo c, se observa que existen puntos atípicos, como puede ser el 1, el 13 y el 14. Posiblemente, estas valores atípicos se deban a problemas de heterodasticidad.
+
+#Veamos como se distribuye a lo largo de los años la  variable "Residuals" del modelo:
+
+datos_2 = as.data.frame(cbind(Años=df_Cantabria$X,Residuos=Mod_c$residuals))
+
+plot(datos_2$Años, datos_2$Residuos, type = "o", pch = 16, col = "blue",
+     xlab = "Años", ylab = "Residuos", main = "Heterodasticidad",ylim = c(min(datos_2$Residuos), max(datos_2$Residuos) + 0.01))
+text(datos_2$Años, datos_2$Residuos, labels = datos_2$Años, pos = 3)
+
+#Con esta gráfica se comprueba que existe un problema de heterodasticidad. Sobre todo, el problema es bastante palpable en los años 1, 13 y 14 como veiamos anteriormente.
+
+#Con esto, se incumple una de las condiciones para el uso correcto de los MCO, que la varianza no es cte.
+
+
+```
+
+```{r 02. Regresion Linea simple - Modelo de predicción}
+
+#Prediccion --> VAB en 2020 IPI = -0.1
+
+IPI_2020 = -0.1
+
+nuevosdatos = data.frame(IPI=IPI_2020)
+predicción = predict(Mod_c,nuevosdatos,interval = "prediction")
+predicción
+
+# El resultado que obtengo es el siguiente:
+
+# fit: -0.06104856
+# Valor mínimo de la predicción: -0.1410808
+# Valor máximo de la predicción: 0.01898366
+
+
+
+```
+```{r 03. Regresion Linea simple - Hipótesis H0}
+
+# H_0 = (β_i=1)
+# H_1 = (β_i!=1)
+# Estadístico de contraste: t_i = (β^i−βi) / (Sβ^i)
+
+#El nivel de significación (α) representa la probabilidad de rechazar la hipótesis nula cuando es verdadera, por tanto cuanto más bajo sea este valor, más amplio será el intervalo de confianza. Provemos con varios α hasta determinar en que nivel de significación entraría el valor β_i=1, en el intervalo de confianza:
+
+# Para α = 0.1:
+
+confint(Mod_c,2,level=0.90) #Siendo el argumento "level" = 1-α. Lo que se denomina como grado de confianza asociado al intervalo
+
+# Para α = 0.05:
+confint(Mod_c,2,level=0.95)
+
+# Para α = 0.025:
+confint(Mod_c,2,level=0.975)
+
+# Para α = 0.005:
+confint(Mod_c,2,level=0.995)
+
+#Se comprueba que con un nivel de significación de α = 0.005, la H_0 se aceptaría y por tanto, se podría decir que la pendiente que relaciona VAB e IPI es igual a 1.
+
+# Se indica que la H_0 se rechaza, por lo que tomaré un α = 0.05.
+
+```
+```{r 04. Regresion Linea Multiple - VABt con las variables del data set}
+
+#Se prepara el modelo. Este será un modelo de regresión lineal múltiple:
+
+Mod_RLM <- lm(VAB~EXPORT+IPI+OCUP+X, data=df_Cantabria)
+summary(Mod_RLM)
+
+#Los coeficientes no seon muy significativos y la R^2 no es muy alta (0.6891)
+
+#Paso a evaluar los residuos. Como se comentaba anteriormente, para el uso correcto del MCO se debe cumplir que la E(ei) = 0, no haya problemas de heterocedasticidad, es decir que la varianza de los residuos sea constante. Por tanto:
+
+E_Mod_RLM = mean(Mod_RLM$residuals)
+E_Mod_RLM 
+
+#El valor resultante es muy próximo a 0, por lo que damos por buena la primera condición. Pasamos a la siguiente:
+
+plot(Mod_RLM)
+
+#Por medio de la curva Q-Q se comrpueba que existen valores anómalos o outliers.
+
+#Comprobemoslo, echándole un ojo a la curva de residuos:
+
+datos_3 = as.data.frame(cbind(Años=df_Cantabria$X,Residuos=Mod_RLM$residuals))
+
+plot(datos_3$Años, datos_3$Residuos, type = "o", pch = 16, col = "blue",
+     xlab = "Años", ylab = "Residuos", main = "Heterodasticidad",ylim = c(min(datos_3$Residuos), max(datos_3$Residuos) + 0.01))
+text(datos_3$Años, datos_3$Residuos, labels = datos_3$Años, pos = 3)
+
+#Puede verse que la varianza de los residuos no es cte. Se destacan las instancias anómalas: 4, 11, 12, 13 y 14.
+
+#Test glvma: No se realiza este test porque este solo ofrece resultados validos para muestras n−k>30. Como no es el caso, no quiero sacar conclusiones erróneas.
+
+
+#El AIC es una medida que compara la calidad relativa de un conjunto de modelos estadísticos.
+#El BIC tiene la misma función que el AIE. Es especialmente útil cuando se desea evitar modelos sobreparametrizados.
+
+#Se seleccionarán aquellos modelos para los que se obtengan unos AIC y BIC más bajo
+
+AIC_Mod_RLM = AIC(Mod_RLM)
+BIC_Mod_RLM = BIC(Mod_RLM)
+
+#El hecho de que estos valores sean negativos, indican que el modelo se ajusta bien a los datos.
+
+#En aras de hacer un chequeo, vamos a hallar estos valores por medio de la Función de Máxima Verosimilitud:
+
+AIC_Mod_RLM_2 = 2*(ncol(Mod_RLM[["model"]])+1)-2*logLik(Mod_RLM)
+BIC_Mod_RLM_2 = log(nrow(df_Cantabria))*(ncol(Mod_RLM[["model"]])+1)-2*logLik(Mod_RLM)
+
+paste("AIC_1: ",AIC_Mod_RLM)
+paste("AIC_2: ",AIC_Mod_RLM_2)
+paste("BIC_1: ",BIC_Mod_RLM)
+paste("AIC_2: ",BIC_Mod_RLM_2)
+
+```
+
+```{r 05. Regresion Linea Multiple - Método alternativo al MCO}
+
+# Tras analizar los residuos del MCO, observamos que existen algunos valores atípicos o puntos de datos de alto leverage. Como se trata de un dataset referido a una serie temporal, no podemos excluir niguna instancia del análisis.
+
+#Como alternativa al MCO y con el objeto de mantener todas las instancias, proponemos llevar a cabo una regresión robusta. Una regresión robusta es, en términos generales, una forma de regresión de mínimos cuadrados ponderada y reponderada.
+
+#Procedo al calculo de esta regresión robusta por medio del estimador Huber:
+
+Mod_Rob = rlm(VAB~EXPORT+IPI+OCUP+X, data=df_Cantabria)
+
+#Ahora comparo la distribución de los residuos en ambos modelos:
+
+datos_4 = as.data.frame(cbind(Años=df_Cantabria$X,Residuos=Mod_Rob$residuals))
+
+par(mfrow = c(1, 1))
+
+# Trama del conjunto de datos del modelo RLM:
+
+plot(datos_3$Años, datos_3$Residuos, type = "o", pch = 16, col = "blue",
+     xlab = "Años", ylab = "Residuos", main = "Heteroscedasticidad",
+     ylim = c(min(datos_3$Residuos), max(datos_3$Residuos) + 0.01))
+text(datos_3$Años, datos_3$Residuos, labels = datos_3$Años, pos = 3)
+
+# Trama del conjunto de datos del modelo Robusto:
+points(datos_4$Años, datos_4$Residuos, type = "o", pch = 16, col = "red")
+
+# Agrego una leyenda
+legend("topright", legend = c("RLM", "Robusto"), col = c("blue", "red"), pch = 16)
+
+plot (Mod_Rob)
+
+#Esperaba un mejor ajuste en cuanto a la variabilidad de los residuos. Se siguen observando valores atípico u outliers:
+
+summary(Mod_Rob)
+summary(Mod_RLM)
+
+#Por otro lado, comprobando estadísticos de significancia global, observo que el error estándar residual disminuye a la mitad usando una regresión robusta que una regresión clásica, síntoma de que el ajuste de los datos es mejor.
+
+
+```
+
+```{r 06. Regresion Linea Multiple - Intervalo de predicción y predicción puntual}
+
+#Se definen los valores del 2020 tal y como se muestran en el enunciado. IPI_2020, ya e definió anteriormente.
+
+OCUP_2020 = -0.05
+EXPORT_2020 = 0
+X_2020 = 20
+
+nuevosdatos = data.frame(EXPORT = c(EXPORT_2020),IPI =c(IPI_2020), OCUP = c(OCUP_2020), X=c(X_2020))
+
+#Se utiliza la función "predict" para hallar intervalos de predicción de la variable vAB en base a los valores definidos anteriormente:
+#Para la predicción usaré el modelo robusto pues es el que mejor se ajusta dado el valor del error estándar residual
+
+predicción_intervalo = predict(Mod_Rob,nuevosdatos,interval = "prediction") 
+
+
+cat("Predicción puntual para el año 2020 de VAB: ",predicción[1],"\n\nPredicción por intervalo para el año 2020 de VAB:\n","Valor inferior del intervalo: ",predicción[2],"\nValor superior del intervalo: ",predicción[3])
+
+```
+
+```{r 07. No parametricos - Regresión por splines}
+
+# Una función spline está formada por varios polinomios, cada uno definido sobre un subintervalo. CAda polinomio tiene sentido en un cierto intervalo.
+
+#Tengo que definir cuales serán mis nodos. En base al número de nodos, se definirá el grado de los polinomios.
+
+# En los puntos de los nodos, la función va a ser la derivada que va a dar continuidad y suavidad a la curva
+
+#Las funciones de splines más comúnmente utilizadas son las de grado 3.
+
+#Una de las desventajas del método de la econometría no paramétrica, como es el caso de la regresión por Splines, es la necesidad de contar con muestras muy grandes. No obstante, veamos los resultados que se obtienen.
+
+plot(x=df_Cantabria$IPI,y=df_Cantabria$VAB, main = "Cantabria", xlab="Evolución mensual de los precios de los productos industriales", ylab="Valor Agregado Bruto", pch =20, col="red")
+
+#A la vista de los resultado de este gráfico, puedo sacar 3 nodos para el spline que sean: - 0.1, -0.05 y 0. Veamos que spline obtengo:
+
+# Voy a darle 3 nodos = 4 polinomios cúbicos:
+
+df_Can.spl_0.0 <- lm(VAB ~ bs(IPI, knots=c(-0.1, -0.05, 0),degree = 3),data=df_Cantabria)
+summary(df_Can.spl_0.0)
+
+#Una vez se ha hecho esta regresión, voy a predecir nuevos puntos para poder predecir nuevos puntos regresados:
+
+rango_0.0 = range(df_Cantabria$IPI)
+npuntos_0.0 = seq (from =rango_0.0[1], to = rango_0.0[2], by =0.005)
+npuntos_0.0 = data.frame (IPI = npuntos_0.0)
+npredic_0.0 = predict(df_Can.spl_0.0, newdata=npuntos_0.0, se.fit =TRUE, level =0.95) #Level = 0.95, la función predict() calculará intervalos de predicción al 95% de confianza.
+head(npredic_0.0)
+
+#Se hallan los intervalos de confianza para cada uno de estos puntos:
+
+intconf_0.0 = data.frame(
+  inferior_0.0 = npredic_0.0$fit - 1.96*npredic_0.0$se.fit,
+  superior_0.0 = npredic_0.0$fit + 1.96*npredic_0.0$se.fit
+)
+
+intconf_0.0
+
+plot(x=df_Cantabria$IPI,y=df_Cantabria$VAB, main = "Cantabria", xlab="Evolución mensual de los precios de los productos industriales", ylab="Valor Agregado Bruto", pch =20, col="red", ylim = c(-0.15,0.2))
+lines (x=npuntos_0.0$IPI, npredic_0.0$fit, col = "green", lwd=2)
+lines (x=npuntos_0.0$IPI, intconf_0.0$inferior_0.0, col = "blue", lwd=2, lty=2)
+lines (x=npuntos_0.0$IPI, intconf_0.0$superior_0.0, col = "blue", lwd=2, lty=2)
+
+#A la vista de los resultados, los nodos escogidos no son los adecuados. Probemos ahora con los cuartiles
+
+q = quantile(df_Cantabria$IPI, probs = c(0.25, 0.5, 0.75))
+
+
+# Voy a darle 3 nodos = 4 polinomios cúbicos:
+
+df_Can.spl_0.1 <- lm(VAB ~ bs(IPI, knots=c(q[1],q[2],q[3]),degree = 3),data=df_Cantabria)
+summary(df_Can.spl_0.1)
+
+#Una vez se ha hecho esta regresión, voy a predecir nuevos puntos para poder predecir nuevos puntos regresados:
+
+rango_0.1 = range(df_Cantabria$IPI)
+npuntos_0.1 = seq (from =rango_0.1[1], to = rango_0.1[2], by =0.005)
+npuntos_0.1 = data.frame (IPI = npuntos_0.1)
+npredic_0.1 = predict(df_Can.spl_0.1, newdata=npuntos_0.1, se.fit =TRUE, level =0.95) #Level = 0.95, la función predict() calculará intervalos de predicción al 95% de confianza.
+head(npredic_0.1)
+
+#Se hallan los intervalos de confianza para cada uno de estos puntos:
+
+intconf_0.1 = data.frame(
+  inferior_0.1 = npredic_0.1$fit - 1.96*npredic_0.1$se.fit,
+  superior_0.1 = npredic_0.1$fit + 1.96*npredic_0.1$se.fit
+)
+
+intconf_0.1
+
+plot(x=df_Cantabria$IPI,y=df_Cantabria$VAB, main = "Cantabria", xlab="Evolución mensual de los precios de los productos industriales", ylab="Valor Agregado Bruto", pch =20, col="red", ylim = c(-0.15,0.2))
+lines (x=npuntos_0.1$IPI, npredic_0.1$fit, col = "green", lwd=2)
+lines (x=npuntos_0.1$IPI, intconf_0.1$inferior, col = "blue", lwd=2, lty=2)
+lines (x=npuntos_0.1$IPI, intconf_0.1$superior, col = "blue", lwd=2, lty=2)
+
+#Parece que el ajuste es bastante bueno.
+
+#No obstante, se hace el ajuste por spline natura --> Función ns, para que no haya mucha variabilidad en los extremos de la cruva:
+
+df_Can.spl_2_0.1 <- lm(VAB ~ ns(IPI, knots=c(q[1],q[2],q[3])),data=df_Cantabria) #Cuando se pone ns ya sabe que es con un cúbico
+summary(df_Can.spl_2_0.1)
+
+#Una vez se ha hecho esta regresión, voy a predecir nuevos puntos para poder predecir nuevos puntos regresados:
+
+rango_2_0.1 = range(df_Cantabria$IPI)
+npuntos_2_0.1 = seq (from =rango_2_0.1[1], to = rango_2_0.1[2], by =0.005)
+npuntos_2_0.1 = data.frame (IPI = npuntos_2_0.1)
+npredic_2_0.1 = predict(df_Can.spl_2_0.1, newdata=npuntos_2_0.1, se.fit =TRUE, level =0.95) #Level = 0.95, la función predict() calculará intervalos de predicción al 95% de confianza.
+head(npredic_2_0.1)
+
+#Se hallan los intervalos de confianza para cada uno de estos puntos:
+
+intconf_2_0.1 = data.frame(
+  inferior_2_0.1 = npredic_2_0.1$fit - 1.96*npredic_2_0.1$se.fit,
+  superior_2_0.1 = npredic_2_0.1$fit + 1.96*npredic_2_0.1$se.fit
+)
+
+intconf_2_0.1
+
+plot(x=df_Cantabria$IPI,y=df_Cantabria$VAB, main = "Cantabria - SOLUCIÓN SPLINES", xlab="Evolución mensual de los precios de los productos industriales", ylab="Valor Agregado Bruto", pch =20, col="red", ylim = c(-0.15,0.2))
+lines (x=npuntos_2_0.1$IPI, npredic_2_0.1$fit, col = "green", lwd=2)
+lines (x=npuntos_2_0.1$IPI, intconf_2_0.1$inferior_2_0.1, col = "blue", lwd=2, lty=2)
+lines (x=npuntos_2_0.1$IPI, intconf_2_0.1$superior_2_0.1, col = "blue", lwd=2, lty=2)
+
+#Se observa que las cruvas de los intervalos de confianza se ajustan mucho mejor a la curva de regresión.
+
+#Pinto los dos modelos para corroborar la mejora
+
+plot(x=df_Cantabria$IPI,y=df_Cantabria$VAB, main = "Cantabria - COMPARACIÓN SPLINES", xlab="Evolución mensual de los precios de los productos industriales", ylab="Valor Agregado Bruto", pch =20, col="red", ylim = c(-0.15,0.2))
+lines (x=npuntos_2_0.1$IPI, npredic_2_0.1$fit, col = "green", lwd=2)
+lines (x=npuntos_2_0.1$IPI, intconf_2_0.1$inferior_2_0.1, col = "blue", lwd=2, lty=2)
+lines (x=npuntos_2_0.1$IPI, intconf_2_0.1$superior_2_0.1, col = "blue", lwd=2, lty=2)
+lines (x=npuntos_0.1$IPI, npredic_0.1$fit, col = "orange", lwd=2)
+lines (x=npuntos_0.1$IPI, intconf_0.1$inferior_0.1, col = "violet", lwd=2, lty=2)
+lines (x=npuntos_0.1$IPI, intconf_0.1$superior_0.1, col = "violet", lwd=2, lty=2)
+
+# Crea un gráfico con los datos y las líneas ajustadas
+
+plot(x = df_Cantabria$IPI, y = df_Cantabria$VAB, main = "Cantabria - SOLUCIÓN SPLINES",
+     xlab = "Evolución mensual de los precios de los productos industriales",
+     ylab = "Valor Agregado Bruto", pch = 20, col = "red", ylim = c(-0.15, 0.2))
+lines (x=npuntos_2_0.1$IPI, npredic_2_0.1$fit, col = "navy", lwd=2)
+polygon(x = c(npuntos_2_0.1$IPI, rev(npuntos_2_0.1$IPI)),
+        y = c(intconf_2_0.1$inferior_2_0.1, rev(intconf_2_0.1$superior_2_0.1)),density = 30,
+        col = "grey", border = NA)
+
+#Pasamos ahora al ancho de ventana por el criterio de validación cruzada. El  ancho de ventana no es más que la distancia entre los knots, que anteriormente hemos estimado como: -0.05, 0, 0.05. Para la determinación de estos anchos de ventana, usaremos la validación cruzada:
+
+cvfit <- cv.glmnet (as.matrix(df_Cantabria[,c("IPI","OCUP")]), as.matrix(df_Cantabria[,"VAB"]), nfolds = 4, alpha = 1, standarize = F) #Incorporo una nueva variable en el eje X, porque cv.glmnet no me permitia usar solo una. Cojo la variable "OCUP" que también tiene una alta correlación con VAB, como ya vimos anteriormente
+
+#Indico nfolds = 4 porque quiero que se mantengan los 4 anchos de banda (3 knots).
+
+plot (cvfit)
+
+cv_opt = as.data.frame(cbind(lambda=cvfit[["lambda"]], cvm=cvfit[["cvm"]]))
+
+# Obtengo la instancia que tiene menor cvm (error promedio de validación cruzada), el cual me da el mejor rendimiento del modelo.
+
+instancia_min_cvm <- cv_opt %>%
+  filter(cvm == min(cvm))
+
+#Obtengo una lambda igual a: 0.0002160842, la cual coincide con este valor:
+
+cvfit[["lambda.min"]]
+
+# Por tanto, para este lambda, el spline será:
+
+df_Can.spl_CV <- smooth.spline(x=df_Cantabria$IPI, y=df_Cantabria$VAB, lambda =instancia_min_cvm$lambda)
+
+plot(x = df_Cantabria$IPI, y = df_Cantabria$VAB, main = "Cantabria - SOLUCIÓN SPLINES",
+     xlab = "Evolución mensual de los precios de los productos industriales",
+     ylab = "Valor Agregado Bruto", pch = 20, col = "red", ylim = c(-0.15, 0.2))
+lines(df_Can.spl_CV, col = "blue")
+
+# Obtengo los nodos y sus anchos de ventana
+
+nodos <- df_Can.spl_CV[["fit"]][["knot"]]
+ancho_ventanas = c(df_Can.spl_CV[["fit"]][["knot"]][1])
+
+for (i in 2:length(df_Can.spl_CV[["fit"]][["knot"]])){
+  
+  ancho_ventanas = append (ancho_ventanas,df_Can.spl_CV[["fit"]][["knot"]][i]-df_Can.spl_CV[["fit"]][["knot"]][i-1])
+}
+
+cat("Por tanto los anchos de ventana serán: ", ancho_ventanas)
+
+#Comparo este Spline con la spline con lambda igual a 0:
+  
+df_Can.spl_0 <- smooth.spline(x=df_Cantabria$IPI, y=df_Cantabria$VAB)
+
+plot(x = df_Cantabria$IPI, y = df_Cantabria$VAB, main = "Cantabria - COMPARACIÓN SPLINES",
+     xlab = "Evolución mensual de los precios de los productos industriales",
+     ylab = "Valor Agregado Bruto", pch = 20, col = "red", ylim = c(-0.15, 0.2))
+lines(df_Can.spl_CV, col = "blue")
+lines(df_Can.spl_0, col = "violet")
+
+#Incluyo en la comparativa, el Spline obtenido en el ejerccio anterior:
+
+plot(x = df_Cantabria$IPI, y = df_Cantabria$VAB, main = "Cantabria - COMPARACIÓN SPLINES",
+     xlab = "Evolución mensual de los precios de los productos industriales",
+     ylab = "Valor Agregado Bruto", pch = 20, col = "red", ylim = c(-0.15, 0.2))
+lines(df_Can.spl_CV, col = "blue")
+lines(df_Can.spl_0, col = "violet")
+lines (x=npuntos_2_0.1$IPI, npredic_2_0.1$fit, col = "green", lwd=2)
+
+#Termino el gráfico con los intervalos de confianza anteriores:
+
+plot(x = df_Cantabria$IPI, y = df_Cantabria$VAB, main = "Cantabria - COMPARACIÓN SPLINES",
+     xlab = "Evolución mensual de los precios de los productos industriales",
+     ylab = "Valor Agregado Bruto", pch = 20, col = "red", ylim = c(-0.15, 0.2))
+lines(df_Can.spl_CV, col = "blue")
+lines(df_Can.spl_0, col = "violet")
+lines (x=npuntos_2_0.1$IPI, npredic_2_0.1$fit, col = "green", lwd=2)
+polygon(x = c(npuntos_2_0.1$IPI, rev(npuntos_2_0.1$IPI)),
+        y = c(intconf_2_0.1$inferior_2_0.1, rev(intconf_2_0.1$superior_2_0.1)),density = 30,
+        col = "grey", border = NA)
+
+#A la vista de los resultados, la conclusión que obtengo principalmente es que fuera de los intervalos de confianza sigue habiendo instancias, síntoma de puntos anómalos / outliers. Debido a esto, y como ya hemos observado anteriormente, el problema de la heterocedasticidad es palpable.
+
+```
+
+```{r 08. No parametricos - Regresión por polinomios}
+
+#Vamos a hacer una análisis del VAB con respecto a OCU, por tando:
+
+df_Cantabria_Ej08 <- subset(df_Cantabria, select = c("VAB", "OCUP"))
+plot(x=df_Cantabria_Ej08$OCUP,y=df_Cantabria_Ej08$VAB, xlab="Ocupación", ylab = "Valor Agregado Bruto", main = "VAB ~ OCUP", pch = 20, col="red")
+
+# Pasamos al ajuste por regresión polinomial. Voy a considerar polinomios desde grado 1 hasta grado 6 y analizo cada uno de los resultados:
+
+# Grado 1
+
+ajustpol1 = lm(formula= df_Cantabria_Ej08$VAB ~ df_Cantabria_Ej08$OCUP)
+summary(ajustpol1)
+
+# Grado 2
+
+ajustpol2 = lm(formula= df_Cantabria_Ej08$VAB ~ df_Cantabria_Ej08$OCUP + I(df_Cantabria_Ej08$OCUP^2))
+summary(ajustpol2)
+
+# Grado 3
+
+ajustpol3 = lm(formula= df_Cantabria_Ej08$VAB ~ df_Cantabria_Ej08$OCUP + I(df_Cantabria_Ej08$OCUP^2) +  I(df_Cantabria_Ej08$OCUP^3))
+summary(ajustpol3)
+
+# Grado 4
+
+ajustpol4 = lm(formula= df_Cantabria_Ej08$VAB ~ df_Cantabria_Ej08$OCUP + I(df_Cantabria_Ej08$OCUP^2) +  I(df_Cantabria_Ej08$OCUP^3) +  I(df_Cantabria_Ej08$OCUP^4))
+summary(ajustpol4)
+
+# Grado 5
+
+ajustpol5 = lm(formula= df_Cantabria_Ej08$VAB ~ df_Cantabria_Ej08$OCUP + I(df_Cantabria_Ej08$OCUP^2) +  I(df_Cantabria_Ej08$OCUP^3) +  I(df_Cantabria_Ej08$OCUP^4)+ I(df_Cantabria_Ej08$OCUP^5))
+summary(ajustpol5)
+
+# Grado 6
+
+ajustpol6 = lm(formula= df_Cantabria_Ej08$VAB ~ df_Cantabria_Ej08$OCUP + I(df_Cantabria_Ej08$OCUP^2) +  I(df_Cantabria_Ej08$OCUP^3) +  I(df_Cantabria_Ej08$OCUP^4)+ I(df_Cantabria_Ej08$OCUP^5)+ I(df_Cantabria_Ej08$OCUP^6))
+summary(ajustpol6)
+
+# Se observa que solo en el polinómio de grado 3, hay un coeficiente significativo, el de grado 3. R^2 = 0.72, aceptable.
+
+# Antes de decantarme por uno de los modelos, voy a hacer un test Anova de todos los modelos:
+
+anova(ajustpol1,ajustpol2,ajustpol3,ajustpol4,ajustpol5,ajustpol6)
+
+#Se observa que el polinomio 3 ajusta pero el 4 ya no ajusta.Por tanto, me quedo definitivamente con el de grado 3.Lo pinto en la gráfica:
+
+plot(ajustpol3)
+
+#En primer lugar, se observa en la gráfico que las observaciones 1, 11 y 14 son valores atípicos
+
+rango_OCUP <- range(df_Cantabria$OCUP)
+npuntos_OCUP <- data.frame(OCUP = seq(from = rango_OCUP[1], to = rango_OCUP[2], by = 0.002))
+
+Interc = as.numeric(ajustpol3[["coefficients"]][1])
+coef1= as.numeric(ajustpol3[["coefficients"]][2])
+coef2= as.numeric(ajustpol3[["coefficients"]][3])
+coef3= as.numeric(ajustpol3[["coefficients"]][4])
+npredic_OCUP = c()
+
+for (i in 1:nrow(npuntos_OCUP)) {
+  
+  npredic_OCUP [i] = Interc + coef1*npuntos_OCUP[i,"OCUP"] + coef2*(npuntos_OCUP[i,"OCUP"]^2) + coef3*(npuntos_OCUP[i,"OCUP"]^3)
+  
+}
+
+npredic_OCUP = as.data.frame (npredic_OCUP)
+coord_x <- df_Cantabria$OCUP
+coord_y <- df_Cantabria$VAB
+num_observaciones <- 1:length(coord_x)
+
+plot(x=df_Cantabria$OCUP,y=df_Cantabria$VAB, main = "Cantabria", xlab="Ocupación", ylab="Valor Agregado Bruto", pch =20, col="red", ylim = c(-0.15,0.2))
+lines (x=npuntos_OCUP$OCUP, npredic_OCUP$npredic_OCUP, col = "green", lwd=2)
+text(x = coord_x, y = coord_y, labels = num_observaciones, pos = 3, col = "blue")
+
+#La conclusión anterior casa con los resultados de este gráfico, pues las observaciones 1, 11 y 14, parecen ser las más alejagas del polinomio de tercer grado.
+
+
+```
+```{r 09.1 Análisis Experimental - Estudio desarrollo aptitud estudiantes} 
+# Tareas estandarizadas - cuatro modelos de análisis
+# Tareas son presentadas a los estudiantes, cuando realizan las evaluaciones
+# Las evaluaciones son programadas de forma secuencial a lo largo del curso.
+# Rendimiento en la resolución de los modelos es valorado con una escala de 10 puntos
+# Posibles diferencias atribuible al género, Dos muestras iguales de escolares de uno y otro género
+
+df_AE = as.data.frame(read_xlsx("Notas.xlsx"))
+
+#Se trata de un dataframe que se compone de 4 variables:
+
+#- Sexo: 1 para un género y 2 para el otro
+#- Sujeto: El individuo estudiado
+#- Prueba: Las 4 pruebas en las que se basa el estudio.Los cuatro modelos de análisis
+#- Calificación: Puntuación del 0 a 10
+
+#A la vista de los datos proporcionados, el modelo más adecuado para este análisis es el modelo Split-Plot. Donde:
+
+# Main Plot o Whole Plot = Factor Sexo
+# Subplot = Factor Prueba
+
+#La formulación del modelo sería, por tanto, la siguiente:
+
+#yijk=[μ+αi+πj(i)]+[βk+αβik+π′kj(i)] = WholePlot+Subplot
+
+df_AE$Sexo = as.factor(df_AE$Sexo)
+df_AE$Sujeto = as.factor(df_AE$Sujeto)
+df_AE$Prueba = as.factor(df_AE$Prueba)
+
+summary(df_AE)
+
+levels(df_AE$Sexo)
+levels(df_AE$Sujeto)
+levels(df_AE$Prueba)
+
+```
+
+
+{r echo=FALSE}
+    knitr::include_graphics("full_image_path")
+```{r echo=FALSE}
+
+include_graphics("Y:/05. Formación/02_Master de Big Data/04_CURSO/05_EXÁMENES/03_EVALUACIONES 2024/03_Modulo 3/01_PARA ENTREGAR/Ev_Mod3_Ej 09.png")
+
+```
+
+```{r 09.2 Análisis Experimental - Analisis descriptivo}
+
+#Represento en un histograma el número de veces que se repite una calificación concreta:
+
+rango_cal = range(df_AE$Calificacion)
+media_Cal = mean (df_AE$Calificacion)
+mediana_Cal = median (df_AE$Calificacion)
+
+Hist_Calificacion=hist(df_AE$Calificacion, breaks = seq(rango_cal[1],rango_cal[2],0.5), xaxt="n", main = "Estudio aptitud estudiante - Calificacioens", xlab = "Calificaciones", ylab = "Frecuencia", col = "steelblue")
+axis(side=1, at=seq(rango_cal[1],rango_cal[2],0.5))
+#Añado las líneas verticales
+abline(v=media_Cal,lty='dashed',col = "red",lwd="6")
+abline(v=mediana_Cal,lty='dashed',col = "purple",lwd="6")
+#Añado la leyenda
+legend("topright", legend = c(paste("Calificación Media =", round(media_Cal, 1)),
+                               paste("Mediana de la calificación =", round(mediana_Cal, 1))),
+       col = c("red", "purple"), lty = 'dashed', lwd = 3, bty = "o")
+
+#No me convence el gráfico. Obtengo pocas conclusiones de él. Por tanto, reduzco los intervalos, aumentando los rangos de estudio:
+
+Hist_Calificacion_2=hist(df_AE$Calificacion, breaks = seq(0,10,2), xaxt="n", main = "Estudio aptitud estudiante - Calificacioens", xlab = "Calificaciones", ylab = "Frecuencia", col = "steelblue")
+axis(side=1, at=seq(0,10,2))
+#Añado las líneas verticales
+abline(v=media_Cal,lty='dashed',col = "red",lwd="6")
+abline(v=mediana_Cal,lty='dashed',col = "purple",lwd="6")
+#Añado la leyenda
+legend("topright", legend = c(paste("Calificación Media =", round(media_Cal, 1)),
+                               paste("Mediana de la calificación =", round(mediana_Cal, 1))),
+       col = c("red", "purple"), lty = 'dashed', lwd = 3, bty = "o")
+
+#A partir del último hitograma, obtengo que la distribución de las calificacioens sigue una distribución normal.
+
+#Obtengo también la moda por medio de una función:
+
+find_mode <- function(x) {
+  u <- unique(x)
+  tab <- tabulate(match(x, u)) #La función tab devuelve un vector donde cada elemento representa la cantidad de veces que aparece un valor en un conjunto de datos.
+  u[tab == max(tab)]
+}
+
+moda_Cal <- find_mode(df_AE$Calificacion)
+freq_moda_Cal = sum(df_AE$Calificacion==moda_Cal)
+
+cat("La media general de las calificaciones es: ",media_Cal,"\n\n")
+cat("La mediana general de las calificaciones es: ",mediana_Cal,"\n\n")
+cat("La moda general de las calificaciones es: ",moda_Cal," y se repite ",freq_moda_Cal," veces\n\n")
+
+# La moda del conjunto de calificaciones es 7.5, el cual se repite hasta 13 veces en el conjunto de valores.
+
+# Una vez se ha analizada la variable calificaciones desde el punto de vista general, se particulariza por cada uno de los grupos:
+
+medias.sexo <- aggregate(df_AE$Calificacion, 
+                             list(sexo = df_AE$Sexo),
+                             "mean")
+
+cat("Para el sexo ",medias.sexo[1,"sexo"]," sus calificaciones medias son: ", medias.sexo[1,"x"],". Por otro lado, para el sexo ",medias.sexo[2,"sexo"]," sus calificaciones medias son: ",medias.sexo[2,"x"])
+
+#La media de las calificaciones del sexo 1 son mayores que las del sexo 2
+
+medias.sujeto <- aggregate(df_AE$Calificacion, 
+                             list(Sujeto = df_AE$Sujeto),
+                             "mean")
+
+
+cat("\n\nPara el sujeto ",medias.sujeto[1,"Sujeto"]," sus calificaciones medias son: ", medias.sujeto[1,"x"],". Para el sujeto ",medias.sujeto[2,"Sujeto"]," sus calificaciones medias son: ", medias.sujeto[2,"x"],". Para el sujeto ",medias.sujeto[3,"Sujeto"]," sus calificaciones medias son: ", medias.sujeto[3,"x"],". Para el sujeto ",medias.sujeto[4,"Sujeto"]," sus calificaciones medias son: ", medias.sujeto[4,"x"],". Para el sujeto ",medias.sujeto[5,"Sujeto"]," sus calificaciones medias son: ", medias.sujeto[5,"x"],". Para el sujeto ",medias.sujeto[6,"Sujeto"]," sus calificaciones medias son: ", medias.sujeto[6,"x"],". Para el sujeto ",medias.sujeto[7,"Sujeto"]," sus calificaciones medias son: ", medias.sujeto[7,"x"],". Para el sujeto ",medias.sujeto[8,"Sujeto"]," sus calificaciones medias son: ", medias.sujeto[8,"x"],". Para el sujeto ",medias.sujeto[9,"Sujeto"]," sus calificaciones medias son: ", medias.sujeto[9,"x"],". Para el sujeto ",medias.sujeto[10,"Sujeto"]," sus calificaciones medias son: ", medias.sujeto[10,"x"])
+
+#El sujeto que obtiene mejores calificacioens es el 4 y los que peores calificaciones obtienen son el 5 y el 6.
+
+medias.prueba <- aggregate(df_AE$Calificacion, 
+                             list(Prueba = df_AE$Prueba),
+                             "mean")
+
+cat("\n\nPara la prueba ",medias.prueba[1,"Prueba"]," la calificación media fue: ", medias.prueba[1,"x"],". Para la prueba ",medias.prueba[2,"Prueba"]," la calificación media fue: ", medias.prueba[2,"x"],". Para la prueba ",medias.prueba[3,"Prueba"]," la calificación media fue: ", medias.prueba[3,"x"],". Para la prueba ",medias.prueba[4,"Prueba"]," la calificación media fue: ", medias.prueba[4,"x"])
+
+#Por lo que se concluye que la prueba 1 fue la más difícil y la 4 la más fácil.
+
+#Dibujo diagramas de cajas y bigotes:
+
+boxplot(df_AE$Calificacion ~ df_AE$Sexo, col = c("red","green3"), main = "Boxplot - Calificaciones ~ Sexo ",xlab = "Sexo", ylab="Calificaciones")
+
+#Medias muy parecidas en ambos grupos. Intervalo intercuartílico más amplio sexo 2. No se aprecían valores anómalos.
+
+boxplot(df_AE$Calificacion ~ df_AE$Sujeto, col = c("navy", "violet"),
+        main = "Boxplot - Calificaciones ~ Sujeto", xlab = "Sujeto", ylab = "Calificaciones")
+abline(h = media_Cal, lty = 'dashed', col = "red", lwd = "2")
+abline(h = mediana_Cal, lty = 'dashed', col = "green", lwd = "2")
+abline(v = 5.5, col = "black", lty = "dotted", lwd="4")
+text(1, 9, "Sexo 1", pos = 4, col = "black") 
+text(7, 9, "Sexo 2", pos = 2, col = "black") 
+
+#Con este gráfico se pretende corroborar lo comentado anteriormente: El sujeto que obtiene mejores calificacioens es el 4 y los que peores calificaciones obtienen son el 5 y el 6 y además, se observa, que sujetos han obtenido calificacioens medias menores a la calificación media general.
+
+# 3 sujetos del sexo 1 tienen unas calificaciones mayores que la media general. Por otro lado, solo 2 sujetos del sexo 2 tienen unas calificaciones mayores que la media general
+
+boxplot(df_AE$Calificacion ~ df_AE$Prueba, col = c("orange","green3", "brown", "blue"), main = "Boxplot - Calificaciones ~ Prueba ",xlab = "Prueba", ylab="Calificaciones")
+
+#Es curioso observar como los valores medios se aproximan a los extremos de los intervalos cuartílicos. En las pruebas 1, 2 y 3, al extremo superior y en la prueba 4 al extremo inferior.
+
+#Otro aspecto curioso es el valor 5 como valor anómalo en los sujetos que han obtenido calificaciones de 5 en la prueba 1.
+
+quantile.prueba <- aggregate(df_AE$Calificacion, 
+                             list(Prueba = df_AE$Prueba),
+                             "quantile")
+quantile.prueba = as.data.frame(cbind(Prueba=quantile.prueba$Prueba
+                                      ,quantile.prueba$x,Media=medias.prueba$x))
+quantile.prueba
+
+# Para entrar más en detalle en los valores medios de cada prueba, hacemos unos histogramas que nos permiten visualizar si los conjuntos de datos siguen una distribución simétrica:
+
+p1 = df_AE[df_AE$Prueba==1,]
+p2 = df_AE[df_AE$Prueba==2,]
+p3 = df_AE[df_AE$Prueba==3,]
+p4 = df_AE[df_AE$Prueba==4,]
+
+Hist_Calificacion_p1 = hist(p1$Calificacion, breaks = seq(0,10,2), xaxt="n", main = "Estudio aptitud estudiante - Calificaciones_p1", xlab = "Calificaciones_p1", ylab = "Frecuencia", col = "steelblue")
+axis(side=1, at=seq(0,10,2))
+#Añado las líneas verticales
+abline(v=medias.prueba[1,"x"],lty='dashed',col = "red",lwd="2")
+#Añado la leyenda
+legend("topright", legend = paste("Calificación Media =", round(medias.prueba[1,"x"], 1)),
+                            col = "red", lty = 'dashed', lwd = 3, bty = "o")
+
+
+Hist_Calificacion_p2 = hist(p2$Calificacion, breaks = seq(0,10,2), xaxt="n", main = "Estudio aptitud estudiante - Calificaciones_p2", xlab = "Calificaciones_p2", ylab = "Frecuencia", col = "steelblue")
+axis(side=1, at=seq(0,10,2))
+#Añado las líneas verticales
+abline(v=medias.prueba[2,"x"],lty='dashed',col = "red",lwd="2")
+#Añado la leyenda
+legend("topright", legend = paste("Calificación Media =", round(medias.prueba[2,"x"], 1)),
+                            col = "red", lty = 'dashed', lwd = 3, bty = "o")
+
+
+Hist_Calificacion_p3 = hist(p3$Calificacion, breaks = seq(0,10,2), xaxt="n", main = "Estudio aptitud estudiante - Calificaciones_p3", xlab = "Calificaciones_p3", ylab = "Frecuencia", col = "steelblue")
+axis(side=1, at=seq(0,10,2))
+#Añado las líneas verticales
+abline(v=medias.prueba[3,"x"],lty='dashed',col = "red",lwd="2")
+#Añado la leyenda
+legend("topright", legend = paste("Calificación Media =", round(medias.prueba[3,"x"], 1)),
+                            col = "red", lty = 'dashed', lwd = 3, bty = "o")
+
+
+Hist_Calificacion_p4 = hist(p4$Calificacion, breaks = seq(0,10,2), xaxt="n", main = "Estudio aptitud estudiante - Calificaciones_p4", xlab = "Calificaciones_p4", ylab = "Frecuencia", col = "steelblue")
+axis(side=1, at=seq(0,10,2))
+#Añado las líneas verticales
+abline(v=medias.prueba[4,"x"],lty='dashed',col = "red",lwd="2")
+#Añado la leyenda
+legend("topright", legend = paste("Calificación Media =", round(medias.prueba[4,"x"], 1)),
+                            col = "red", lty = 'dashed', lwd = 3, bty = "o")
+
+#Se concluye que las razones por las que los valores medios se aproximan a los extremos de los rangos intercuartilicos son:
+
+#- Para la prueba 1: Valor ourlier 5.
+#- Para la prueba 2, 3 y 4: Asimetrias en sus distribuciones
+
+#A continuación uso la función interaction.plot(), la cual me va a permitir visualizar las interacciones entre dos factores en un diseño factorial. Me va a genera un gráfico que muestra cómo varía una variable de respuesta. Por tanto:
+
+df_AE_IP_SP=interaction.plot(df_AE$Sexo,df_AE$Prueba, df_AE$Calificacion, xlab="Sexo", ylab="Calificación", col=c("red","blue", "orange", "green3"))
+
+# Las curvas son paralelas y no se cruzan, esto sugiere que no hay una interacción significativa entre los factores Sexo y Prueba en relación con la variable de respuesta Calificacion.
+
+#No obstante, conviene verificar que los efectos si los efectos son significativos por medio de un ANOVA (Análisis de la Varianza):
+
+modelo_anova_AE_SP <- aov(Calificacion ~ Sexo + Prueba, data = df_AE)
+summary(modelo_anova_AE_SP)
+
+#Se observa que la variable prueba si es significativa, pero la variable sexo, no, como no puede ser de otra forma, dadas las diferencias en las medias para cada nivel en cada factor.
+
+#Prosigo con las interacciones entre Sujeto y Prueba:
+
+df_AE_IP_SuP=interaction.plot(df_AE$Sujeto,df_AE$Prueba, df_AE$Calificacion, xlab="Sujeto", ylab="Calificación", col=c("red","blue", "orange", "green3"))
+
+# Sí que parece que hay interacción entre estas dos variables dados los distintos cruces que se producen
+
+modelo_anova_AE_SuP <- aov(Calificacion ~ Prueba + Sujeto, data = df_AE)
+summary(modelo_anova_AE_SuP)
+
+#Se corrobora lo comentado anteriormente, dado que los efectos son significativos.
+
+```
+
+```{r 10. Análisis Experimental - Analisis descriptivo}}
+
+#Se trata de un diseño split-plot. El diseño se compone de dos efectos fijos, el sexo y la prueba, y un factor aleatorio, sujeto, anidado dentro del factor sexo.
+
+#Por las conclusiones tomadas anteriormente de ANOVA, tomo el siguiente modelo lineal mixto:
+
+modelo_split_plot = lmer(Calificacion ~ 1 + Sexo*Prueba  + (1 | Sexo:Sujeto), data = df_AE)
+summary(modelo_split_plot)
+
+
+#Llegamos a que una estimación del modelo sería:
+
+#El nivel de referencia a la hora de presentar los efectos fijos es el primero de cada uno de los factores, es decir, sexo = 1 y prueba = 1
+
+# C=3.3−*S_2+1.2*P_2+3.7*P_3+5.2*P_4+0.5(S_2*P_2)+0.5(S_2*P_3)+0.5(S_2*P_4)
+
+# Siendo:
+
+#- C la variable respuesta, calificación.
+#- S_2 el parámetro que recoge la diferencia de medias entre sexo 1 y 2
+#- P_2 el parámetro que recoge la diferencia de medias entre prueba 1 y 2
+#- P_3 el parámetro que recoge la diferencia de medias entre prueba 1 y 3
+#- P_4 el parámetro que recoge la diferencia de medias entre prueba 1 y 4
+#- S_2*P_2 indican cómo cambia la relación entre Sexo y Prueba para la categoría Sexo 2 y Prueba 2
+#- S_2*P_3 indican cómo cambia la relación entre Sexo y Prueba para la categoría Sexo 2 y Prueba 3
+#- S_2*P_4 indican cómo cambia la relación entre Sexo y Prueba para la categoría Sexo 2 y Prueba 4
+
+#Como se observa en la tabla resumen, los coeficientes más significativos son los del Intercepto, Prueba 3 y Prueba 4.
+
+#En la siguiente tabla se muestran los coefiientes del modelo particularizados para cada uno de los sujetos:
+
+coef(modelo_split_plot)
+
+#Como se puede apreciar, el punto diferencial se encuentra en el Intercepto, el cual es mayor en el sujeto 4 y menor en los sujetos 5 y 6. Esto casa con lo comentado arriba: El sujeto que obtiene mejores calificacioens es el 4 y los que peores calificaciones obtienen son el 5 y el 6
+
+#Procedo a hallar la tabla ANOVA de este modelo:
+
+paste("ANOVA modelo split-plot")
+anova(modelo_split_plot)
+
+#Los resultado casan con el anova anteriormente calculado del modelo: modelo_anova_AE_SP. En ambos, los efectos de la variable "Prueba" son significativos
+
+#Comparemos este anova (split-plot -- Modelo de Efectos Aleatorios) con el de un modelo de efectos fijos
+
+paste("ANOVA modelo de efectos fijos")
+anova(lm(Calificacion ~ Sexo*Prueba, data = df_AE))
+
+#Principales conclusiones que obtengo tras realizar esta comparativa:
+
+# 1. Modelo Split-Plot: a) La interacción Sexo:Prueba no es significativa (p-value = 0.9473), lo que sugiere que no hay una diferencia significativa en las calificaciones entre los sexos en función de las diferentes pruebas. Como ya se vió anteriomente, b) la variable Prueba es altamente significativa (p-value < 0.001), lo que indica que hay diferencias significativas en las calificaciones entre las diferentes pruebas. Como también se pudo ver anteriormente y c) la variable sexo no es significativa tampoco
+
+# 2. Modelo de Efectos Fijos: a) La variable Prueba vuelve a ser altamente significativa (p-value < 0.001) y b) Ni la interacción, ni el sexo son significativos
+
+#3. Ambos modelos indican que la variable Prueba tiene un impacto significativo en las calificaciones, mientras que la interacción Sexo:Prueba y la variable Sexo no son relevantes en las calificaciones.
+
+
+```
+
+
+
+
